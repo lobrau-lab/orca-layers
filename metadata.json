@@ -1,0 +1,11 @@
+{
+  "name": "Orchestra Mission Control",
+  "description": "macOS Desktop Control Surface for Local AI Agents, Tmux Terminals, Node Companion Services, and Multi-Device Desktop Orchestration.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
