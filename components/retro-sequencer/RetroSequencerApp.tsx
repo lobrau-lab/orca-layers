@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { SequencerEngine } from '@/lib/retro-sequencer/engine';
 import { backendBridge } from '@/lib/retro-sequencer/backend-bridge';
 import { CharacterMode, CharacterTrack, SpriteAtlasConfig } from '@/lib/retro-sequencer/types';
+import { globalKeyboardInputLogger, useKeyboardInputLoop } from '@/lib/retro-sequencer/keyboard-input-logger';
 import { RetroViewport } from './RetroViewport';
 import { ArcadeHud } from './ArcadeHud';
 import { TrackController } from './TrackController';
@@ -40,6 +41,15 @@ export default function RetroSequencerApp() {
     setTracks([...engine.getTracks()]);
     setRailSplines([...engine.getRailSplines()]);
   };
+
+  // High-precision rAF-slaved input poller hook:
+  // Polls the keysPressed Map on every requestAnimationFrame and dispatches
+  // keyMask payload to backendBridge to prevent input drops from event-listener throttling
+  useKeyboardInputLoop({
+    armedTrackId,
+    isRecording,
+    logger: globalKeyboardInputLogger,
+  });
 
   // Subscribe to backend transport & clock
   useEffect(() => {

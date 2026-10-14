@@ -14,6 +14,7 @@ import {
   Gamepad2
 } from 'lucide-react';
 import { CharacterTrack } from '@/lib/retro-sequencer/types';
+import { KeyInputDisplay } from './KeyInputDisplay';
 import { InputCaptureHud } from './InputCaptureHud';
 
 interface RetroViewportProps {
@@ -253,14 +254,19 @@ export const RetroViewport: React.FC<RetroViewportProps> = ({
           }}
         />
 
-        {/* Persistent Floating Input Capture HUD */}
+        {/* Persistent Semi-Transparent Floating Key Input HUD Overlay */}
         {showKeyHud && (
-          <InputCaptureHud
+          <KeyInputDisplay
             isRecording={isRecording}
             isPlaying={isPlaying}
             armedTrack={armedTrack}
-            engine={engineInstance}
             defaultPosition="bottom-left"
+            keysPressedSource={() => (engineInstance ? engineInstance.getKeysPressed() : {})}
+            onVirtualKeyPress={(code, isPressed) => {
+              if (engineInstance) {
+                engineInstance.setVirtualKey(code, isPressed);
+              }
+            }}
           />
         )}
 

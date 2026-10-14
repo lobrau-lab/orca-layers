@@ -12,6 +12,7 @@
  * 4. Audio clock / transport tick mismatch (slaves frame-perfect input state to master clock)
  */
 
+import { useEffect } from 'react';
 import { backendBridge } from './backend-bridge';
 import { 
   CharacterAction, 
@@ -25,6 +26,7 @@ export type LoggerDispatchMode = 'continuous' | 'on_change_or_heartbeat' | 'on_a
 export class KeyboardInputLogger {
   // Source of keys: either an external getter or internal map
   private keysSource: (() => Record<string, boolean>) | null = null;
+  public keysPressed: Map<string, boolean> = new Map<string, boolean>();
   private internalKeysPressed: Record<string, boolean> = {};
 
   // rAF loop handles
@@ -110,15 +112,18 @@ export class KeyboardInputLogger {
     }
 
     this.internalKeysPressed[e.code] = true;
+    this.keysPressed.set(e.code, true);
   };
 
   private handleKeyUp = (e: KeyboardEvent) => {
     this.internalKeysPressed[e.code] = false;
+    this.keysPressed.set(e.code, false);
   };
 
   private handleBlur = () => {
     // Clear all held keys if window loses focus to prevent stuck keys
     this.internalKeysPressed = {};
+    this.keysPressed.clear();
   };
 
   // --- Public Configuration & Virtual Inputs ---
@@ -148,6 +153,7 @@ export class KeyboardInputLogger {
    */
   public setVirtualKey(code: string, isPressed: boolean) {
     this.internalKeysPressed[code] = isPressed;
+    this.keysPressed.set(code, isPressed);
   }
 
   public getKeysPressed(): Record<string, boolean> {
@@ -160,6 +166,10 @@ export class KeyboardInputLogger {
       }
     }
     return { ...this.internalKeysPressed };
+  }
+
+  public getKeysPressedMap(): Map<string, boolean> {
+    return this.keysPressed;
   }
 
   // --- rAF Polling Engine ---
@@ -377,3 +387,98 @@ export const globalKeyboardInputLogger = new KeyboardInputLogger({
   autoStart: true,
   mode: 'continuous',
 });
+
+/**
+ * Computes the 7-bit keyMask bitmask from a keys Map or Record
+ */
+export function computeKeyMask(keys: Map<string, boolean> | Record<string, boolean>): number {
+  const isDown = (code: string) => {
+    if (keys instanceof Map) return !!keys.get(code);
+    return !!keys[code];
+  };
+
+  let mask = 0;
+  if (isDown('KeyA') || isDown('ArrowLeft')) mask |= INPUT_MASK.LEFT;
+  if (isDown('KeyD') || isDown('ArrowRight')) mask |= INPUT_MASK.RIGHT;
+  if (isDown('KeyW') || isDown('ArrowUp')) mask |= INPUT_MASK.UP;
+  if (isDown('KeyS') || isDown('ArrowDown')) mask |= INPUT_MASK.DOWN;
+  if (isDown('Space')) mask |= INPUT_MASK.JUMP;
+  if (isDown('KeyE')) mask |= INPUT_MASK.DANCE;
+  if (isDown('KeyF')) mask |= INPUT_MASK.SPIN;
+  return mask;
+}
+
+/**
+ * React hook for RetroSequencerApp main loop:
+ * Polls the KeyboardInputLogger keysPressed Map on every requestAnimationFrame
+ * and dispatches a keyMask payload to backendBridge to prevent input drops from event throttling.
+ */
+export function useKeyboardInputLoop({
+  armedTrackId,
+  isRecording,
+  logger = globalKeyboardInputLogger,
+  enabled = true,
+}: {
+  armedTrackId: string | null;
+  isRecording: boolean;
+  logger?: KeyboardInputLogger;
+  enabled?: boolean;
+}) {
+  useEffect(() => {
+    if (!enabled) return;
+
+    let animId: number;
+
+    const poll = () => {
+      const keysMap = logger.getKeysPressedMap();
+      const armedId = armedTrackId || 'track-1';
+      const mask = computeKeyMask(keysMap);
+
+      const activeKeysList: string[] = [];
+      keysMap.forEach((isDown, code) => {
+        if (isDown) activeKeysList.push(code);
+      });
+
+      const isLeft = !!(keysMap.get('KeyA') || keysMap.get('ArrowLeft'));
+      const isRight = !!(keysMap.get('KeyD') || keysMap.get('ArrowRight'));
+      const isUp = !!(keysMap.get('KeyW') || keysMap.get('ArrowUp'));
+      const isDown = !!(keysMap.get('KeyS') || keysMap.get('ArrowDown'));
+      const isJump = !!keysMap.get('Space');
+      const isDance = !!keysMap.get('KeyE');
+      const isSpin = !!keysMap.get('KeyF');
+
+      let action: 'idle' | 'move' | 'jump' | 'dance' | 'spin' = 'idle';
+      if (isJump) action = 'jump';
+      else if (isDance) action = 'dance';
+      else if (isSpin) action = 'spin';
+      else if (isLeft || isRight || isUp || isDown) action = 'move';
+
+      const payload: KeyMaskPayload = {
+        keyMask: mask,
+        activeKeys: activeKeysList,
+        timestamp: Date.now(),
+        perfTimestamp: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+        frameNumber: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) / 16.6),
+        action,
+        direction: {
+          x: (isRight ? 1 : 0) - (isLeft ? 1 : 0),
+          y: (isDown ? 1 : 0) - (isUp ? 1 : 0),
+        },
+        characterId: armedId,
+        isRecording,
+        dropsPrevented: logger.getStats().dropsPrevented,
+      };
+
+      // Dispatch keyMask payload to backendBridge
+      backendBridge.emitKeyMask(payload);
+
+      animId = requestAnimationFrame(poll);
+    };
+
+    animId = requestAnimationFrame(poll);
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [armedTrackId, isRecording, logger, enabled]);
+}
+
